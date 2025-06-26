@@ -3,7 +3,5 @@ name = "lll"
 version = "0.1.0"
 edition = "2021"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-
 [dependencies]
-rug = "1.22.0"
+rug = { version = "1.22.0", features = ["gmp-mpfr-sys/force-cross"] }
