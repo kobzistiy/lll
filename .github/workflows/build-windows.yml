@@ -1,5 +1,4 @@
-
-name: Build LLL for Windows (GNU)
+name: Build LLL for Windows (GNU + Rug + GMP)
 
 on:
   push:
@@ -18,7 +17,10 @@ jobs:
         rustup default stable
         rustup target add x86_64-pc-windows-gnu
 
-    - name: Build release for Windows GNU
+    - name: Set env for static linking
+      run: echo "RUSTFLAGS=-C target-feature=+crt-static" >> $env:GITHUB_ENV
+
+    - name: Build with force-cross
       run: cargo build --release --target x86_64-pc-windows-gnu
 
     - name: Upload Windows Binary
