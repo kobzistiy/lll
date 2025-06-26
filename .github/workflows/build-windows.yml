@@ -16,15 +16,15 @@ jobs:
     - name: Install Rust
       uses: dtolnay/rust-toolchain@stable
 
-    - name: Install build dependencies
+    - name: Install C build dependencies
       run: |
         sudo apt update
-        sudo apt install -y build-essential m4 automake autoconf libtool pkg-config gcc-mingw-w64
+        sudo apt install -y build-essential m4 autoconf automake libtool pkg-config gcc-mingw-w64
 
     - name: Install cross
       run: cargo install cross
 
-    - name: Build for Windows using cross
+    - name: Build Windows exe using cross
       run: cross build --release --target x86_64-pc-windows-gnu
 
     - name: Upload Windows binary
