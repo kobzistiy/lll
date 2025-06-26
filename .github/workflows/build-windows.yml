@@ -1,4 +1,4 @@
-name: Cross-compile to Windows (.exe)
+name: Build lll.exe on Windows
 
 on:
   push:
@@ -6,28 +6,21 @@ on:
   workflow_dispatch:
 
 jobs:
-  build-windows:
-    runs-on: ubuntu-latest
+  build:
+    runs-on: windows-latest
 
     steps:
-    - name: Checkout repository
+    - name: Checkout code
       uses: actions/checkout@v3
 
-    - name: Install Rust and mingw toolchain
-      run: |
-        rustup target add x86_64-pc-windows-gnu
-        sudo apt update
-        sudo apt install -y mingw-w64 m4 pkg-config curl make gcc
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
 
-    - name: Build with cargo
-      env:
-        CC_x86_64_pc_windows_gnu: x86_64-w64-mingw32-gcc
-        AR_x86_64_pc_windows_gnu: x86_64-w64-mingw32-ar
-      run: |
-        cargo build --release --target x86_64-pc-windows-gnu
+    - name: Build release
+      run: cargo build --release
 
-    - name: Upload Windows binary
+    - name: Upload binary
       uses: actions/upload-artifact@v4
       with:
         name: lll-windows
-        path: target/x86_64-pc-windows-gnu/release/lll.exe
+        path: target/release/lll.exe
