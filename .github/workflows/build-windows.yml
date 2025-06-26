@@ -13,19 +13,18 @@ jobs:
     - name: Checkout repository
       uses: actions/checkout@v3
 
-    - name: Install Rust
-      uses: dtolnay/rust-toolchain@stable
-
-    - name: Install C build dependencies
+    - name: Install Rust and mingw toolchain
       run: |
+        rustup target add x86_64-pc-windows-gnu
         sudo apt update
-        sudo apt install -y build-essential m4 autoconf automake libtool pkg-config gcc-mingw-w64
+        sudo apt install -y mingw-w64 m4 pkg-config curl make gcc
 
-    - name: Install cross
-      run: cargo install cross
-
-    - name: Build Windows exe using cross
-      run: cross build --release --target x86_64-pc-windows-gnu
+    - name: Build with cargo
+      env:
+        CC_x86_64_pc_windows_gnu: x86_64-w64-mingw32-gcc
+        AR_x86_64_pc_windows_gnu: x86_64-w64-mingw32-ar
+      run: |
+        cargo build --release --target x86_64-pc-windows-gnu
 
     - name: Upload Windows binary
       uses: actions/upload-artifact@v4
