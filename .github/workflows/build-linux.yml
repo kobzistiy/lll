@@ -1,31 +1,32 @@
-name: Build Linux binary
+name: Build static Linux binary
 
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
 
 jobs:
-  build-linux:
+  build-static-linux:
     runs-on: ubuntu-latest
 
     steps:
-    - name: Checkout code
+    - name: Checkout source
       uses: actions/checkout@v3
 
-    - name: Install dependencies
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        targets: x86_64-unknown-linux-musl
+
+    - name: Install musl tools
+      run: sudo apt update && sudo apt install -y musl-tools
+
+    - name: Build static binary
+      env:
+        RUSTFLAGS: "-C target-feature=+crt-static"
       run: |
-        sudo apt update
-        sudo apt install -y m4 g++ libgmp-dev libmpfr-dev pkg-config
+        cargo build --release --target x86_64-unknown-linux-musl
 
-    - name: Build binary
-      run: cargo build --release
-
-    - name: Archive binary
-      run: tar -czvf lll-linux.tar.gz -C target/release lll
-
-    - name: Upload artifact
+    - name: Upload binary
       uses: actions/upload-artifact@v4
       with:
-        name: lll-linux
-        path: lll-linux.tar.gz
+        name: lll-linux-static
+        path: target/x86_64-unknown-linux-musl/release/lll
