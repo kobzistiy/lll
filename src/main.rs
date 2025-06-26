@@ -1,4 +1,19 @@
 use rug::{Float, ops::Pow};
+use clap::Parser;
+use std::fs::File;
+use std::io::{BufRead, BufReader};
+
+#[derive(Parser)]
+#[command(author, version, about)]
+struct Args {
+    /// Путь к CSV-файлу с базисом
+    #[arg(long)]
+    file: Option<String>,
+
+    /// Запустить тестовый режим (встроенный пример)
+    #[arg(long)]
+    test: bool,
+}
 
 fn lll(b: &mut Vec<Vec<Float>>, delta: Float) {
     let mut gs: Vec<Vec<Float>> = compute_gs(b);
@@ -197,14 +212,30 @@ fn bkz(basis: &mut Vec<Vec<Float>>, delta: Float, block_size: usize, max_iterati
     }
 }
 
-fn main() {
+fn load_basis_from_csv(path: &str) -> Vec<Vec<Float>> {
+    let file = File::open(path).expect("Не удалось открыть файл");
+    let reader = BufReader::new(file);
+    let mut basis = Vec::new();
+
+    for line in reader.lines() {
+        let line = line.expect("Ошибка чтения строки");
+        let row: Vec<Float> = line
+            .split(',')
+            .map(|s| Float::with_val(53, s.trim().parse::<f64>().expect("Некорректное число")))
+            .collect();
+        basis.push(row);
+    }
+
+    basis
+}
+
+fn run_test() {
     let mut basis = vec![
         vec![Float::with_val(53, 11.0), Float::with_val(53, 3.0), Float::with_val(53, 4.0), Float::with_val(53, 4.0)],
         vec![Float::with_val(53, 2.0), Float::with_val(53, 11.0), Float::with_val(53, 5.0), Float::with_val(53, 6.0)],
         vec![Float::with_val(53, 7.0), Float::with_val(53, 8.0), Float::with_val(53, 11.0), Float::with_val(53, 9.0)],
         vec![Float::with_val(53, 10.0), Float::with_val(53, 11.0), Float::with_val(53, 12.0), Float::with_val(53, 9.0)],
     ];    
-    //let gs = compute_gs(&basis);
     let mut basis1 = basis.clone();
     println!("Original basis: {:?}", basis);
     println!("\nOrthogonality: {}", orthogonality_measure(&basis));
@@ -218,9 +249,20 @@ fn main() {
     println!("\n\nReduced basis (BKZ): {:?}", basis1);
     println!("\nOrthogonality: {}", orthogonality_measure(&basis1));
     println!("Average Vector Length: {}", average_vector_length(&basis1));
-    /*let target = vec![Float::with_val(53, 2.5), Float::with_val(53, 3.5), Float::with_val(53, 4.5)];
-    let bnp_result = bnp(&basis, &target, basis.len(), &gs);
-    let reconstructed = reconstruct(&basis, &bnp_result);
-    println!("bnp: {:?}", bnp_result);
-    println!("Reconstructed vector: {:?}", reconstructed);*/
+}
+
+fn main() {
+    let args = Args::parse();
+
+    if args.test {
+        run_test();
+    } else if let Some(path) = args.file {
+        let basis = load_basis_from_csv(&path);
+        let mut basis1 = basis.clone();
+        let delta = Float::with_val(53, 0.75);
+        lll(&mut basis1, delta.clone());
+        println!("Reduced basis: {:?}", basis1);
+    } else {
+        eprintln!("❗ Укажи либо --test, либо --file <путь>");
+    }
 }
