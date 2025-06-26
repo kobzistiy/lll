@@ -6,3 +6,4 @@ edition = "2021"
 [dependencies]
 rug = "1.22.0"
 gmp-mpfr-sys = { version = "1.6.1", features = ["force-cross"] }
+clap = { version = "4", features = ["derive"] }
