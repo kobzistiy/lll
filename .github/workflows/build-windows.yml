@@ -1,4 +1,4 @@
-name: Build LLL for Windows (.exe)
+name: Cross-compile to Windows EXE
 
 on:
   push:
@@ -6,38 +6,23 @@ on:
   workflow_dispatch:
 
 jobs:
-  build-windows:
-    runs-on: windows-latest
+  build:
+    runs-on: ubuntu-latest
 
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v3
+    - uses: actions/checkout@v3
 
-    - name: Install Rust and Windows GNU target
-      run: |
-        rustup default stable
-        rustup target add x86_64-pc-windows-gnu
+    - name: Set up Rust
+      uses: dtolnay/rust-toolchain@stable
 
-    - name: Install MSYS2 and m4 for GMP build
-      shell: bash
-      run: |
-        choco install -y msys2
-        C:/tools/msys64/usr/bin/bash -lc "pacman -Sy --noconfirm m4 autoconf make gcc"
-        echo "C:/tools/msys64/usr/bin" >> $GITHUB_PATH
+    - name: Install cross
+      uses: taiki-e/setup-cross@v1
 
-    - name: Set static linking flags
-      run: echo "RUSTFLAGS=-C target-feature=+crt-static" >> $env:GITHUB_ENV
+    - name: Build Windows binary with cross
+      run: cross build --release --target x86_64-pc-windows-gnu
 
-    - name: Build Rust project (release)
-      run: cargo build --release --target x86_64-pc-windows-gnu
-
-    - name: Rename binary to lll.exe
-      run: |
-        mkdir -p dist
-        copy target\x86_64-pc-windows-gnu\release\lll.exe dist\lll.exe
-
-    - name: Upload Windows Binary
+    - name: Upload Windows binary
       uses: actions/upload-artifact@v4
       with:
         name: lll-windows
-        path: dist/lll.exe
+        path: target/x86_64-pc-windows-gnu/release/lll.exe
