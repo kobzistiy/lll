@@ -1,32 +1,30 @@
-name: Build static Linux binary
+name: Build Linux binary
 
 on:
+  push:
+    branches: [main]
   workflow_dispatch:
 
 jobs:
-  build-static:
+  build-linux:
     runs-on: ubuntu-latest
 
     steps:
-    - name: Checkout
+    - name: Checkout code
       uses: actions/checkout@v3
 
-    - name: Install musl target
-      run: rustup target add x86_64-unknown-linux-musl
-
-    - name: Install musl tools
-      run: sudo apt-get update && sudo apt-get install -y musl-tools
-
-    - name: Build static binary
-      env:
-        RUSTFLAGS: "-C target-feature=+crt-static"
+    - name: Install dependencies
       run: |
-        cargo build --release --target x86_64-unknown-linux-musl
-        strip target/x86_64-unknown-linux-musl/release/lll
-        tar -czvf lll-linux-static.tar.gz -C target/x86_64-unknown-linux-musl/release lll
+        sudo apt update
+        sudo apt install -y m4 g++ libgmp-dev libmpfr-dev pkg-config
+    - name: Build binary
+      run: cargo build --release
 
-    - name: Upload
+    - name: Archive binary
+      run: tar -czvf lll-linux.tar.gz -C target/release lll
+
+    - name: Upload artifact
       uses: actions/upload-artifact@v4
       with:
-        name: lll-linux-static
-        path: lll-linux-static.tar.gz
+        name: lll-linux
+        path: lll-linux.tar.gz
