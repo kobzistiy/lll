@@ -1,226 +1,283 @@
-use rug::{Float, ops::Pow};
+use rug::{Integer, Rational, ops::Pow};
+use clap::Parser;
+use std::fs::File;
+use std::io::{BufRead, BufReader};
+use std::time::Instant;
 
-fn lll(b: &mut Vec<Vec<Float>>, delta: Float) {
-    let mut gs: Vec<Vec<Float>> = compute_gs(b);
-    loop {
-        let mut flag = false;
-        for k in 1..b.len() {
-            for j in (0..k).rev() {
-                let mu_kj = mu(&b[k], &gs[j]);
-                if mu_kj.clone().abs() > Float::with_val(53, 0.5) {
-                    let adjustment = b[j]
-                        .iter()
-                        .map(|x| x.clone() * mu_kj.clone().round())
-                        .collect::<Vec<Float>>();
-                    b[k] = subtract(&b[k], &adjustment);
-                    gs = compute_gs(b);
-                    flag = true;
-                }
-            }
-        }
-        for i in 0..(b.len() - 1) {
-            if norm(&gs[i + 1]).clone() / norm(&gs[i]).clone().pow(2) < delta.clone() - mu(&gs[i + 1], &gs[i]).clone().pow(2) {
-                b.swap(i, i + 1);
-                flag = true;
-            }
-        }
+#[derive(Parser, Debug)]
+#[command(author, version, about, long_about = "Редукция базиса решетки с использованием алгоритмов LLL или BKZ с точной целочисленной арифметикой.")]
+struct Args {
+    /// Путь к CSV-файлу с базисом (числа в виде строк).
+    #[arg(long)]
+    file: Option<String>,
 
-        if !flag { break; }
-    }
+    /// Запустить встроенный тестовый пример.
+    #[arg(long)]
+    test: bool,
+    
+    /// Данные в виде строки JSON: [["11","3"],["2","11"]].
+    #[arg(long)]
+    data: Option<String>,
+
+    /// Использовать алгоритм LLL для редукции.
+    #[arg(long, group = "algo")]
+    lll: bool,
+
+    /// Использовать алгоритм BKZ для редукции.
+    #[arg(long, group = "algo")]
+    bkz: bool,
+
+    /// (Только для BKZ) Размер блока.
+    #[arg(long, default_value_t = 2)]
+    block_size: usize,
 }
 
-fn norm(vector: &[Float]) -> Float {
-    let squared = multiply(vector, vector);
-    squared.iter()
-           .fold(Float::with_val(53, 0), |acc, x| acc + x)
-           .sqrt()
+// --- Вспомогательные функции для векторов Integer ---
+
+fn subtract_vec(v1: &[Integer], v2: &[Integer]) -> Vec<Integer> {
+    v1.iter()
+        .zip(v2.iter())
+        .map(|(a, b)| Integer::from(a - b)) // Явное преобразование
+        .collect()
 }
 
-fn mu(first: &[Float], second: &[Float]) -> Float {
-    let product = multiply(first, second);
-    let sum_product = product.iter().fold(Float::with_val(53, 0), |acc, x| acc + x);
-    let sum_second_squared = second.iter()
-                                   .map(|x| x.clone().pow(2))
-                                   .fold(Float::with_val(53, 0), |acc, x| acc + x);
-
-    sum_product / sum_second_squared
+fn scalar_mul(scalar: &Integer, v: &[Integer]) -> Vec<Integer> {
+    v.iter()
+        .map(|x| Integer::from(scalar * x)) // Явное преобразование
+        .collect()
 }
 
+// --- Основные алгоритмы ---
 
-fn subtract(first: &[Float], second: &[Float]) -> Vec<Float> {
-    first.iter()
-         .zip(second.iter())
-         .map(|(x, y)| x - y)
-         .map(|z| Float::with_val(53, z))
-         .collect()
-}
+/// Вычисляет ортогональный базис Грама-Шмидта (b_star) и коэффициенты mu.
+/// Это вынесено в отдельную функцию, чтобы избежать дублирования кода в LLL и BKZ.
+fn compute_gram_schmidt(b: &[Vec<Integer>]) -> (Vec<Vec<Rational>>, Vec<Vec<Rational>>) {
+    let n = b.len();
+    let mut b_star: Vec<Vec<Rational>> = Vec::with_capacity(n);
+    let mut mu = vec![vec![Rational::new(); n]; n];
 
-fn add(first: &[Float], second: &[Float]) -> Vec<Float> {
-    first.iter()
-         .zip(second.iter())
-         .map(|(x, y)| x + y)
-         .map(|z| Float::with_val(53, z))
-         .collect()
-}
-
-fn multiply(first: &[Float], second: &[Float]) -> Vec<Float> {
-    first.iter()
-         .zip(second.iter())
-         .map(|(x, y)| x * y)
-         .map(|z| Float::with_val(53, z))
-         .collect()
-}
-
-fn dot_product(first: &[Float], second: &[Float]) -> Float {
-    first.iter()
-         .zip(second)
-         .map(|(x, y)| x * y)
-         .fold(Float::with_val(53, 0), |acc, x| acc + x)
-}
-
-fn orthogonality_measure(basis: &[Vec<Float>]) -> Float {
-    let mut sum = Float::with_val(53, 0);
-    let mut count = 0;
-    for i in 0..basis.len() {
-        for j in i+1..basis.len() {
-            sum += dot_product(&basis[i], &basis[j]).abs();
-            count += 1;
-        }
-    }
-    sum / Float::with_val(53, count)
-}
-
-fn average_vector_length(basis: &[Vec<Float>]) -> Float {
-    let sum = basis.iter().map(|vector| norm(vector)).fold(Float::with_val(53, 0), |acc, x| acc + x);
-    sum / Float::with_val(53, basis.len())
-}
-
-fn compute_gs(b: &[Vec<Float>]) -> Vec<Vec<Float>> {
-    let mut v = vec![vec![Float::with_val(53, 0); b[0].len()]; b.len()];
-    v[0] = b[0].clone();
-    for i in 1..b.len() {
-        let mut sum = vec![Float::with_val(53, 0); b[0].len()];
+    for i in 0..n {
+        let mut b_i_rational: Vec<Rational> = b[i].iter().map(Rational::from).collect();
         for j in 0..i {
-            let mu_b_i_v_j = b[i].iter().zip(&v[j])
-                                .map(|(x, y)| x * y)
-                                .fold(Float::with_val(53, 0), |acc, x| acc + x);
-            let sum_update = v[j].iter()
-                                .map(|x| x * &mu_b_i_v_j)
-                                .map(|z| Float::with_val(53, z))
-                                .collect::<Vec<Float>>();
-            sum = add(&sum, &sum_update);
+            // mu[i][j] = <b_i, b*_j> / <b*_j, b*_j>
+            let num: Rational = b[i].iter().zip(b_star[j].iter()).map(|(bi, bs)| Rational::from(bi) * bs).sum();
+            let den: Rational = b_star[j].iter().map(|c| c.clone().pow(2)).sum();
+            
+            mu[i][j] = if den.is_zero() { Rational::new() } else { num / den };
+
+            let mu_b_star: Vec<Rational> = b_star[j].iter().map(|c| mu[i][j].clone() * c).collect();
+            b_i_rational = b_i_rational.iter().zip(mu_b_star.iter()).map(|(a, b)| Rational::from(a - b)).collect();
         }
-        v[i] = subtract(&b[i], &sum);
+        b_star.push(b_i_rational);
     }
-    v
+    (b_star, mu)
 }
 
-/*fn bnp(b: &[Vec<Float>], target: &[Float], n: usize, v: &[Vec<Float>]) -> Vec<Float> {
-    if n == 0 { 
-        return target.iter().cloned().collect(); 
-    }
 
-    let c_i = mu(target, &v[n - 1]);
-    let adjustment = b[n - 1].iter()
-                             .map(|x| x * &c_i)
-                             .map(|z| Float::with_val(53, z))
-                             .collect::<Vec<Float>>();
-    let new_target = subtract(target, &adjustment);
+/// LLL-редукция с использованием точной арифметики.
+fn lll(b: &mut Vec<Vec<Integer>>, delta: &Rational) {
+    let n = b.len();
+    if n == 0 { return; }
 
-    if n > 1 {
-        bnp(b, &new_target, n - 1, v)
-    } else {
-        new_target
-    }
-}
+    let (mut b_star, mut mu) = compute_gram_schmidt(b);
+    
+    let mut k = 1;
+    while k < n {
+        // Шаг 1: Size reduction
+        for j in (0..k).rev() {
+            let mu_kj = &mu[k][j];
+            if mu_kj.abs() > 0.5 {
+                let q = mu_kj.round();
+                let q_integer = q.numer().clone();
+                
+                // b_k := b_k - q * b_j
+                b[k] = subtract_vec(&b[k], &scalar_mul(&q_integer, &b[j]));
 
-fn reconstruct(basis: &[Vec<Float>], coeffs: &[Float]) -> Vec<Float> {
-    let mut result = vec![Float::with_val(53, 0.0); basis[0].len()];
-    for (i, coeff) in coeffs.iter().enumerate() {
-        for (j, val) in basis[i].iter().enumerate() {
-            result[j] += val * coeff;
-        }
-    }
-    result
-}*/
-
-fn bkz(basis: &mut Vec<Vec<Float>>, delta: Float, block_size: usize, max_iterations: usize) {
-    let mut gs = compute_gs(basis);
-
-    let mut iteration = 0;
-    while iteration < max_iterations {
-        let mut flag = false;
-
-        for k in 0..=(basis.len().saturating_sub(block_size)) {
-            let original_block = basis[k..k + block_size].to_vec();
-            let mut block = original_block.clone();
-            lll(&mut block, delta.clone());
-
-            // Check if any changes have been made to the block
-            if block != original_block {
-                flag = true;
-                // Update the basis vectors with the results from LLL
-                for (j, vec) in block.into_iter().enumerate() {
-                    basis[k + j] = vec;
-                }
-                gs = compute_gs(basis);
-            }
-        }
-
-        for k in 2..=basis.len() {
-            for j in (1..k).rev() {
-                let mu_kj = mu(&basis[k - 1], &gs[j - 1]);
-                if mu_kj.clone().abs() > Float::with_val(53, 0.5) {
-                    let adjustment = basis[j - 1]
-                        .iter()
-                        .map(|x| x.clone() * mu_kj.clone().round())
-                        .collect::<Vec<Float>>();
-                    basis[k - 1] = subtract(&basis[k - 1], &adjustment);
-                    gs = compute_gs(basis);
-                    flag = true;
+                // Обновляем коэффициенты mu для k-й строки
+                for i in 0..=j {
+                   mu[k][i] -= q.clone() * mu[j][i].clone();
                 }
             }
         }
 
-        for i in 1..basis.len() {
-            if norm(&gs[i]).clone() / norm(&gs[i - 1]).clone().pow(2) < delta.clone() - mu(&gs[i], &gs[i - 1]).clone().pow(2) {
-                basis.swap(i - 1, i);
-                flag = true;
-                gs = compute_gs(basis);
+        // Шаг 2: Условие Ловаса
+        let norm_b_star_k_sq: Rational = b_star[k].iter().map(|c| c.clone().pow(2)).sum();
+        
+        // Проверка, чтобы избежать деления на ноль, если b_star[k-1] нулевой
+        if b_star[k-1].iter().all(|c| c.is_zero()) {
+            k += 1;
+            continue;
+        }
+        
+        let norm_b_star_k_minus_1_sq: Rational = b_star[k-1].iter().map(|c| c.clone().pow(2)).sum();
+        
+        if norm_b_star_k_sq >= (delta - mu[k][k-1].clone().pow(2)) * norm_b_star_k_minus_1_sq {
+            k += 1;
+        } else {
+            // Обмен b_k и b_{k-1}
+            b.swap(k, k-1);
+            // Полный пересчет GS-базиса и mu после обмена
+            (b_star, mu) = compute_gram_schmidt(b);
+            
+            if k > 1 {
+                k -= 1;
+            }
+        }
+    }
+}
+
+/// BKZ-редукция с использованием точной арифметики.
+fn bkz(b: &mut Vec<Vec<Integer>>, delta: &Rational, block_size: usize) {
+    let n = b.len();
+    if n == 0 { return; }
+
+    let mut iter_count = 0;
+    loop {
+        iter_count += 1;
+        let old_basis = b.clone();
+
+        // Обработка блоков
+        for k in 0..=(n.saturating_sub(block_size)) {
+            let mut block = b[k..k + block_size].to_vec();
+            lll(&mut block, delta);
+            // Обновляем базис результатами из LLL для блока
+            for i in 0..block_size {
+                b[k + i] = block[i].clone();
             }
         }
 
-        if !flag {
+        // Если базис не изменился после полного прохода, завершаем
+        if &old_basis == b || iter_count > 10 * n { // Ограничитель для предотвращения бесконечного цикла
             break;
         }
-        iteration += 1;
     }
+}
+
+
+// --- Загрузка данных и главная функция ---
+
+fn load_basis_from_string(data_str: &str) -> Vec<Vec<Integer>> {
+    let trimmed = data_str.trim();
+    if trimmed == "[]" { return Vec::new(); }
+    if !trimmed.starts_with("[[") || !trimmed.ends_with("]]") {
+        panic!("Строка данных должна быть в формате JSON-массива массивов строк, например [[\"1\",\"2\"],[\"3\",\"4\"]]");
+    }
+    
+    let inner = &trimmed[1..trimmed.len() - 1];
+
+    inner.split("],[")
+        .map(|s| {
+            let row_str = s.trim_matches(|c| c == '[' || c == ']');
+            row_str.split(',')
+                .map(|num_str| {
+                    let clean_num_str = num_str.trim().trim_matches('"');
+                    clean_num_str.parse::<Integer>().expect("Некорректное большое число в строке данных")
+                })
+                .collect()
+        })
+        .collect()
+}
+
+fn load_basis_from_csv(path: &str) -> Vec<Vec<Integer>> {
+    let file = File::open(path).expect("Не удалось открыть файл");
+    let reader = BufReader::new(file);
+    reader.lines()
+        .map(|line| {
+            let line = line.expect("Ошибка чтения строки");
+            line.split(',')
+                .map(|s| s.trim().parse::<Integer>().expect("Некорректное число в CSV"))
+                .collect()
+        })
+        .collect()
+}
+
+fn format_basis_as_json(basis: &[Vec<Integer>]) -> String {
+    let rows: Vec<String> = basis.iter().map(|row| {
+        let nums: Vec<String> = row.iter().map(|num| format!("\"{}\"", num)).collect();
+        format!("[{}]", nums.join(","))
+    }).collect();
+    format!("[{}]", rows.join(","))
+}
+
+fn run_test() {
+    println!("--- ЗАПУСК ТЕСТОВОГО РЕЖИМА ---");
+    let mut basis: Vec<Vec<Integer>> = vec![
+        vec![Integer::from(19), Integer::from(2), Integer::from(32), Integer::from(41), Integer::from(28)],
+        vec![Integer::from(12), Integer::from(28), Integer::from(11), Integer::from(4), Integer::from(3)],
+        vec![Integer::from(1), Integer::from(5), Integer::from(6), Integer::from(2), Integer::from(44)],
+        vec![Integer::from(11), Integer::from(3), Integer::from(4), Integer::from(8), Integer::from(1)],
+        vec![Integer::from(10), Integer::from(15), Integer::from(21), Integer::from(31), Integer::from(9)],
+    ];
+    
+    println!("\nОригинальный базис:\n{}", format_basis_as_json(&basis));
+
+    let delta = Rational::from((75, 100)); // delta = 0.75
+    
+    // Тест LLL
+    let mut lll_basis = basis.clone();
+    println!("\n--- Запуск LLL ---");
+    let start_lll = Instant::now();
+    lll(&mut lll_basis, &delta);
+    let duration_lll = start_lll.elapsed();
+    println!("Редуцированный базис (LLL):\n{}", format_basis_as_json(&lll_basis));
+    println!("Время выполнения LLL: {:?}", duration_lll);
+
+    // Тест BKZ
+    let mut bkz_basis = basis.clone();
+    let block_size = 3;
+    println!("\n--- Запуск BKZ (размер блока = {}) ---", block_size);
+    let start_bkz = Instant::now();
+    bkz(&mut bkz_basis, &delta, block_size);
+    let duration_bkz = start_bkz.elapsed();
+    println!("Редуцированный базис (BKZ):\n{}", format_basis_as_json(&bkz_basis));
+    println!("Время выполнения BKZ: {:?}", duration_bkz);
 }
 
 fn main() {
-    let mut basis = vec![
-        vec![Float::with_val(53, 11.0), Float::with_val(53, 3.0), Float::with_val(53, 4.0), Float::with_val(53, 4.0)],
-        vec![Float::with_val(53, 2.0), Float::with_val(53, 11.0), Float::with_val(53, 5.0), Float::with_val(53, 6.0)],
-        vec![Float::with_val(53, 7.0), Float::with_val(53, 8.0), Float::with_val(53, 11.0), Float::with_val(53, 9.0)],
-        vec![Float::with_val(53, 10.0), Float::with_val(53, 11.0), Float::with_val(53, 12.0), Float::with_val(53, 9.0)],
-    ];    
-    //let gs = compute_gs(&basis);
-    let mut basis1 = basis.clone();
-    println!("Original basis: {:?}", basis);
-    println!("\nOrthogonality: {}", orthogonality_measure(&basis));
-    println!("Average Vector Length: {}", average_vector_length(&basis));
-    let delta = Float::with_val(53, 0.75);
-    lll(&mut basis, delta.clone());
-    bkz(&mut basis1, delta.clone(), 3, 1000);
-    println!("\n\nReduced basis (LLL): {:?}", basis);
-    println!("\nOrthogonality: {}", orthogonality_measure(&basis));
-    println!("Average Vector Length: {}", average_vector_length(&basis));
-    println!("\n\nReduced basis (BKZ): {:?}", basis1);
-    println!("\nOrthogonality: {}", orthogonality_measure(&basis1));
-    println!("Average Vector Length: {}", average_vector_length(&basis1));
-    /*let target = vec![Float::with_val(53, 2.5), Float::with_val(53, 3.5), Float::with_val(53, 4.5)];
-    let bnp_result = bnp(&basis, &target, basis.len(), &gs);
-    let reconstructed = reconstruct(&basis, &bnp_result);
-    println!("bnp: {:?}", bnp_result);
-    println!("Reconstructed vector: {:?}", reconstructed);*/
+    let args = Args::parse();
+
+    if args.test {
+        run_test();
+        return;
+    }
+
+    // Проверяем, что указан источник данных
+    if args.file.is_none() && args.data.is_none() {
+        eprintln!("Ошибка: Укажите источник данных с помощью --file <путь> или --data <массив>");
+        return;
+    }
+
+    // Проверяем, что выбран алгоритм
+    if !args.lll && !args.bkz {
+        eprintln!("Ошибка: Укажите алгоритм для выполнения с помощью --lll или --bkz");
+        return;
+    }
+
+    let mut basis = if let Some(path) = args.file {
+        load_basis_from_csv(&path)
+    } else if let Some(data_str) = args.data {
+        load_basis_from_string(&data_str)
+    } else {
+        unreachable!(); // Эта ветка недостижима из-за проверок выше
+    };
+
+    if basis.is_empty() {
+        println!("[]");
+        return;
+    }
+
+    let delta = Rational::from((75, 100)); // delta = 0.75
+
+    if args.lll {
+        lll(&mut basis, &delta);
+    } else if args.bkz {
+        if args.block_size > basis.len() || args.block_size < 2 {
+            eprintln!("Ошибка: Размер блока для BKZ должен быть между 2 и размером базиса.");
+            return;
+        }
+        bkz(&mut basis, &delta, args.block_size);
+    }
+
+    // Печатаем результат в формате JSON для легкого парсинга
+    println!("{}", format_basis_as_json(&basis));
 }
