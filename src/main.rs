@@ -86,8 +86,9 @@ fn lll(b: &mut Vec<Vec<Integer>>, delta: &Rational) {
         // Шаг 1: Size reduction
         for j in (0..k).rev() {
             let mu_kj = &mu[k][j];
-            if mu_kj.abs() > 0.5 {
-                let q = mu_kj.round();
+            // ИСПРАВЛЕНИЕ: Клонируем mu_kj перед использованием методов, которые забирают владение.
+            if mu_kj.clone().abs() > 0.5 {
+                let q = mu_kj.clone().round();
                 let q_integer = q.numer().clone();
                 
                 // b_k := b_k - q * b_j
@@ -95,7 +96,9 @@ fn lll(b: &mut Vec<Vec<Integer>>, delta: &Rational) {
 
                 // Обновляем коэффициенты mu для k-й строки
                 for i in 0..=j {
-                   mu[k][i] -= q.clone() * mu[j][i].clone();
+                   // ИСПРАВЛЕНИЕ: Разделяем чтение и запись, чтобы избежать ошибки E0502.
+                   let val_to_mul = mu[j][i].clone();
+                   mu[k][i] -= q.clone() * val_to_mul;
                 }
             }
         }
@@ -201,7 +204,8 @@ fn format_basis_as_json(basis: &[Vec<Integer>]) -> String {
 
 fn run_test() {
     println!("--- ЗАПУСК ТЕСТОВОГО РЕЖИМА ---");
-    let mut basis: Vec<Vec<Integer>> = vec![
+    // ИСПРАВЛЕНИЕ: Убрано `mut`, так как `basis` не изменяется напрямую.
+    let basis: Vec<Vec<Integer>> = vec![
         vec![Integer::from(19), Integer::from(2), Integer::from(32), Integer::from(41), Integer::from(28)],
         vec![Integer::from(12), Integer::from(28), Integer::from(11), Integer::from(4), Integer::from(3)],
         vec![Integer::from(1), Integer::from(5), Integer::from(6), Integer::from(2), Integer::from(44)],
