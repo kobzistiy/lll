@@ -1,4 +1,6 @@
-use rug::{Float, ops::Pow};
+// main.rs
+
+use rug::{Integer, Rational, ops::Pow};
 use clap::Parser;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
@@ -14,275 +16,153 @@ struct Args {
     #[arg(long)]
     test: bool,
     
-    /// Данные в виде [[11,3,4,4],[2,11,5,6],[7,8,11,9],[10,11,12,9]...]
+    /// Данные в виде [["11","3","4"],["2","11","5"]...]
     #[arg(long)]
     data: Option<String>,
 }
 
-fn lll(b: &mut Vec<Vec<Float>>, delta: Float) {
-    let mut gs: Vec<Vec<Float>> = compute_gs(b);
-    loop {
-        let mut flag = false;
-        for k in 1..b.len() {
-            for j in (0..k).rev() {
-                let mu_kj = mu(&b[k], &gs[j]);
-                if mu_kj.clone().abs() > Float::with_val(53, 0.5) {
-                    let adjustment = b[j]
-                        .iter()
-                        .map(|x| x.clone() * mu_kj.clone().round())
-                        .collect::<Vec<Float>>();
-                    b[k] = subtract(&b[k], &adjustment);
-                    gs = compute_gs(b);
-                    flag = true;
-                }
-            }
-        }
-        for i in 0..(b.len() - 1) {
-            if norm(&gs[i + 1]).clone() / norm(&gs[i]).clone().pow(2) < delta.clone() - mu(&gs[i + 1], &gs[i]).clone().pow(2) {
-                b.swap(i, i + 1);
-                flag = true;
-            }
-        }
+// --- Utility Functions for Integer Vectors ---
 
-        if !flag { break; }
-    }
+fn dot_product(v1: &[Integer], v2: &[Integer]) -> Integer {
+    v1.iter().zip(v2.iter()).map(|(x, y)| x * y).sum()
 }
 
-fn norm(vector: &[Float]) -> Float {
-    let squared = multiply(vector, vector);
-    squared.iter()
-           .fold(Float::with_val(53, 0), |acc, x| acc + x)
-           .sqrt()
+fn subtract_vec(v1: &[Integer], v2: &[Integer]) -> Vec<Integer> {
+    v1.iter().zip(v2.iter()).map(|(a, b)| a - b).collect()
 }
 
-fn mu(first: &[Float], second: &[Float]) -> Float {
-    let product = multiply(first, second);
-    let sum_product = product.iter().fold(Float::with_val(53, 0), |acc, x| acc + x);
-    let sum_second_squared = second.iter()
-                                   .map(|x| x.clone().pow(2))
-                                   .fold(Float::with_val(53, 0), |acc, x| acc + x);
-
-    sum_product / sum_second_squared
+fn scalar_mul(scalar: &Integer, v: &[Integer]) -> Vec<Integer> {
+    v.iter().map(|x| scalar * x).collect()
 }
 
+// --- LLL Algorithm (Integer-based implementation) ---
 
-fn subtract(first: &[Float], second: &[Float]) -> Vec<Float> {
-    first.iter()
-         .zip(second.iter())
-         .map(|(x, y)| x - y)
-         .map(|z| Float::with_val(53, z))
-         .collect()
-}
+fn lll(b: &mut Vec<Vec<Integer>>, delta: &Rational) {
+    let n = b.len();
+    let mut b_star = Vec::with_capacity(n); // Gram-Schmidt basis (b*)
+    let mut mu = vec![vec![Rational::new(); n]; n]; // mu coefficients
 
-fn add(first: &[Float], second: &[Float]) -> Vec<Float> {
-    first.iter()
-         .zip(second.iter())
-         .map(|(x, y)| x + y)
-         .map(|z| Float::with_val(53, z))
-         .collect()
-}
-
-fn multiply(first: &[Float], second: &[Float]) -> Vec<Float> {
-    first.iter()
-         .zip(second.iter())
-         .map(|(x, y)| x * y)
-         .map(|z| Float::with_val(53, z))
-         .collect()
-}
-
-fn dot_product(first: &[Float], second: &[Float]) -> Float {
-    first.iter()
-         .zip(second)
-         .map(|(x, y)| x * y)
-         .fold(Float::with_val(53, 0), |acc, x| acc + x)
-}
-
-fn orthogonality_measure(basis: &[Vec<Float>]) -> Float {
-    let mut sum = Float::with_val(53, 0);
-    let mut count = 0;
-    for i in 0..basis.len() {
-        for j in i+1..basis.len() {
-            sum += dot_product(&basis[i], &basis[j]).abs();
-            count += 1;
-        }
-    }
-    sum / Float::with_val(53, count)
-}
-
-fn average_vector_length(basis: &[Vec<Float>]) -> Float {
-    let sum = basis.iter().map(|vector| norm(vector)).fold(Float::with_val(53, 0), |acc, x| acc + x);
-    sum / Float::with_val(53, basis.len())
-}
-
-fn compute_gs(b: &[Vec<Float>]) -> Vec<Vec<Float>> {
-    let mut v = vec![vec![Float::with_val(53, 0); b[0].len()]; b.len()];
-    v[0] = b[0].clone();
-    for i in 1..b.len() {
-        let mut sum = vec![Float::with_val(53, 0); b[0].len()];
+    // Initial Gram-Schmidt
+    for i in 0..n {
+        let mut b_i_rational: Vec<Rational> = b[i].iter().map(Rational::from).collect();
         for j in 0..i {
-            let mu_b_i_v_j = b[i].iter().zip(&v[j])
-                                .map(|(x, y)| x * y)
-                                .fold(Float::with_val(53, 0), |acc, x| acc + x);
-            let sum_update = v[j].iter()
-                                .map(|x| x * &mu_b_i_v_j)
-                                .map(|z| Float::with_val(53, z))
-                                .collect::<Vec<Float>>();
-            sum = add(&sum, &sum_update);
+            let num = b[i].iter().zip(b_star[j].iter()).map(|(bi, bs)| Rational::from(bi) * bs).sum::<Rational>();
+            let den = b_star[j].iter().map(|c| c.clone().pow(2)).sum::<Rational>();
+            mu[i][j] = num / den;
+            let mu_b_star: Vec<Rational> = b_star[j].iter().map(|c| mu[i][j].clone() * c).collect();
+            b_i_rational = b_i_rational.iter().zip(mu_b_star.iter()).map(|(a, b)| a - b).collect();
         }
-        v[i] = subtract(&b[i], &sum);
+        b_star.push(b_i_rational);
     }
-    v
-}
+    
+    let mut k = 1;
+    while k < n {
+        // Size reduction
+        for j in (0..k).rev() {
+            let mu_kj = &mu[k][j];
+            if mu_kj.abs() > 0.5 {
+                let q = mu_kj.round(); // Rounds to nearest integer
+                let q_integer = q.to_integer().unwrap();
+                b[k] = subtract_vec(&b[k], &scalar_mul(&q_integer, &b[j]));
 
-/*fn bnp(b: &[Vec<Float>], target: &[Float], n: usize, v: &[Vec<Float>]) -> Vec<Float> {
-    if n == 0 { 
-        return target.iter().cloned().collect(); 
-    }
-
-    let c_i = mu(target, &v[n - 1]);
-    let adjustment = b[n - 1].iter()
-                             .map(|x| x * &c_i)
-                             .map(|z| Float::with_val(53, z))
-                             .collect::<Vec<Float>>();
-    let new_target = subtract(target, &adjustment);
-
-    if n > 1 {
-        bnp(b, &new_target, n - 1, v)
-    } else {
-        new_target
-    }
-}
-
-fn reconstruct(basis: &[Vec<Float>], coeffs: &[Float]) -> Vec<Float> {
-    let mut result = vec![Float::with_val(53, 0.0); basis[0].len()];
-    for (i, coeff) in coeffs.iter().enumerate() {
-        for (j, val) in basis[i].iter().enumerate() {
-            result[j] += val * coeff;
-        }
-    }
-    result
-}*/
-
-fn bkz(basis: &mut Vec<Vec<Float>>, delta: Float, block_size: usize, max_iterations: usize) {
-    let mut gs = compute_gs(basis);
-
-    let mut iteration = 0;
-    while iteration < max_iterations {
-        let mut flag = false;
-
-        for k in 0..=(basis.len().saturating_sub(block_size)) {
-            let original_block = basis[k..k + block_size].to_vec();
-            let mut block = original_block.clone();
-            lll(&mut block, delta.clone());
-
-            // Check if any changes have been made to the block
-            if block != original_block {
-                flag = true;
-                // Update the basis vectors with the results from LLL
-                for (j, vec) in block.into_iter().enumerate() {
-                    basis[k + j] = vec;
-                }
-                gs = compute_gs(basis);
-            }
-        }
-
-        for k in 2..=basis.len() {
-            for j in (1..k).rev() {
-                let mu_kj = mu(&basis[k - 1], &gs[j - 1]);
-                if mu_kj.clone().abs() > Float::with_val(53, 0.5) {
-                    let adjustment = basis[j - 1]
-                        .iter()
-                        .map(|x| x.clone() * mu_kj.clone().round())
-                        .collect::<Vec<Float>>();
-                    basis[k - 1] = subtract(&basis[k - 1], &adjustment);
-                    gs = compute_gs(basis);
-                    flag = true;
+                // Update mu values for row k
+                for i in 0..=j {
+                   mu[k][i] -= q.clone() * mu[j][i].clone();
                 }
             }
         }
 
-        for i in 1..basis.len() {
-            if norm(&gs[i]).clone() / norm(&gs[i - 1]).clone().pow(2) < delta.clone() - mu(&gs[i], &gs[i - 1]).clone().pow(2) {
-                basis.swap(i - 1, i);
-                flag = true;
-                gs = compute_gs(basis);
+        // Lovász condition
+        let norm_b_star_k_sq: Rational = b_star[k].iter().map(|c| c.clone().pow(2)).sum();
+        let norm_b_star_k_minus_1_sq: Rational = b_star[k-1].iter().map(|c| c.clone().pow(2)).sum();
+        
+        if norm_b_star_k_sq >= (delta - mu[k][k-1].clone().pow(2)) * norm_b_star_k_minus_1_sq {
+            k += 1;
+        } else {
+            // Swap b_k and b_{k-1}
+            b.swap(k, k-1);
+
+            // Recompute Gram-Schmidt for the swapped vectors
+            // (A full recomputation is easier to implement correctly)
+            for i in 0..n {
+                let mut b_i_rational: Vec<Rational> = b[i].iter().map(Rational::from).collect();
+                for j in 0..i {
+                    let num = b[i].iter().zip(b_star[j].iter()).map(|(bi, bs)| Rational::from(bi) * bs).sum::<Rational>();
+                    let den = b_star[j].iter().map(|c| c.clone().pow(2)).sum::<Rational>();
+                    mu[i][j] = num / den;
+                    let mu_b_star: Vec<Rational> = b_star[j].iter().map(|c| mu[i][j].clone() * c).collect();
+                    b_i_rational = b_i_rational.iter().zip(mu_b_star.iter()).map(|(a, b)| a - b).collect();
+                }
+                b_star[i] = b_i_rational;
+            }
+            
+            if k > 1 {
+                k -= 1;
             }
         }
-
-        if !flag {
-            break;
-        }
-        iteration += 1;
     }
 }
 
-fn load_basis_from_csv(path: &str) -> Vec<Vec<Float>> {
-    let file = File::open(path).expect("Не удалось открыть файл");
-    let reader = BufReader::new(file);
-    let mut basis = Vec::new();
+// --- Data Loading ---
 
-    for line in reader.lines() {
-        let line = line.expect("Ошибка чтения строки");
-        let row: Vec<Float> = line
-            .split(',')
-            .map(|s| Float::with_val(53, s.trim().parse::<f64>().expect("Некорректное число")))
-            .collect();
-        basis.push(row);
-    }
-
-    basis
-}
-
-fn load_basis_from_string(data_str: &str) -> Vec<Vec<Float>> {
+fn load_basis_from_string(data_str: &str) -> Vec<Vec<Integer>> {
     let trimmed = data_str.trim();
-    if !trimmed.starts_with('[') || !trimmed.ends_with(']') {
-        panic!("Строка данных должна начинаться с '[' и заканчиваться ']'");
-    }
-
-    // Убираем внешние скобки: "[[1,2],[3,4]]" -> "[1,2],[3,4]"
-    // Если строка пустая "[]", вернем пустой вектор
-    if trimmed.len() <= 2 {
-        return Vec::new();
+    if !trimmed.starts_with("[[") || !trimmed.ends_with("]]") {
+        if trimmed == "[]" { return Vec::new(); }
+        panic!("String data must be in the format [[\"num1\",\"num2\"],[\"num3\",\"num4\"]]");
     }
     let inner = &trimmed[1..trimmed.len() - 1];
 
     inner.split("],[")
         .map(|s| {
-            // Убираем оставшиеся скобки '[' и ']' с крайних элементов
             let row_str = s.trim_matches(|c| c == '[' || c == ']');
-            let row: Vec<Float> = row_str
-                .split(',')
+            row_str.split(',')
                 .map(|num_str| {
-                    let parsed_num = num_str.trim().parse::<f64>()
-                        .expect("Некорректное число в строке данных");
-                    Float::with_val(53, parsed_num)
+                    // Trim quotes and whitespace, then parse
+                    let clean_num_str = num_str.trim().trim_matches('"');
+                    clean_num_str.parse::<Integer>().expect("Invalid large integer in data string")
                 })
-                .collect();
-            row
+                .collect()
         })
         .collect()
 }
 
+fn load_basis_from_csv(path: &str) -> Vec<Vec<Integer>> {
+    let file = File::open(path).expect("Could not open file");
+    let reader = BufReader::new(file);
+    let mut basis = Vec::new();
+
+    for line in reader.lines() {
+        let line = line.expect("Error reading line");
+        let row: Vec<Integer> = line
+            .split(',')
+            .map(|s| s.trim().parse::<Integer>().expect("Invalid number in CSV"))
+            .collect();
+        basis.push(row);
+    }
+    basis
+}
+
+// --- Main Execution Logic ---
+
 fn run_test() {
-    let mut basis = vec![
-        vec![Float::with_val(53, 11.0), Float::with_val(53, 3.0), Float::with_val(53, 4.0), Float::with_val(53, 4.0)],
-        vec![Float::with_val(53, 2.0), Float::with_val(53, 11.0), Float::with_val(53, 5.0), Float::with_val(53, 6.0)],
-        vec![Float::with_val(53, 7.0), Float::with_val(53, 8.0), Float::with_val(53, 11.0), Float::with_val(53, 9.0)],
-        vec![Float::with_val(53, 10.0), Float::with_val(53, 11.0), Float::with_val(53, 12.0), Float::with_val(53, 9.0)],
-    ];    
-    let mut basis1 = basis.clone();
+    let mut basis: Vec<Vec<Integer>> = vec![
+        vec![Integer::from(1), Integer::from(1), Integer::from(1)],
+        vec![Integer::from(-1), Integer::from(0), Integer::from(2)],
+        vec![Integer::from(3), Integer::from(5), Integer::from(6)],
+    ];
     println!("Original basis: {:?}", basis);
-    println!("\nOrthogonality: {}", orthogonality_measure(&basis));
-    println!("Average Vector Length: {}", average_vector_length(&basis));
-    let delta = Float::with_val(53, 0.75);
-    lll(&mut basis, delta.clone());
-    bkz(&mut basis1, delta.clone(), 3, 1000);
-    println!("\n\nReduced basis (LLL): {:?}", basis);
-    println!("\nOrthogonality: {}", orthogonality_measure(&basis));
-    println!("Average Vector Length: {}", average_vector_length(&basis));
-    println!("\n\nReduced basis (BKZ): {:?}", basis1);
-    println!("\nOrthogonality: {}", orthogonality_measure(&basis1));
-    println!("Average Vector Length: {}", average_vector_length(&basis1));
+    let delta = Rational::from((3, 4)); // delta = 0.75
+    lll(&mut basis, &delta);
+    println!("\nReduced basis (LLL): {:?}", basis);
+}
+
+fn format_basis_as_json(basis: &[Vec<Integer>]) -> String {
+    let rows: Vec<String> = basis.iter().map(|row| {
+        let nums: Vec<String> = row.iter().map(|num| format!("\"{}\"", num.to_string())).collect();
+        format!("[{}]", nums.join(","))
+    }).collect();
+    format!("[{}]", rows.join(","))
 }
 
 fn main() {
@@ -290,25 +170,28 @@ fn main() {
 
     if args.test {
         run_test();
-        // Завершаем программу после теста
         return;
     }
 
-    // Сначала получаем базис из одного из источников (файл или строка)
-    let basis = if let Some(path) = args.file {
+    let mut basis = if let Some(path) = args.file {
         load_basis_from_csv(&path)
     } else if let Some(data_str) = args.data {
         load_basis_from_string(&data_str)
     } else {
-        // Если не указан ни один из источников, выводим ошибку и выходим
-        eprintln!("❗ Укажи либо --test, либо --file <путь>, либо --data <массив>");
+        eprintln!("❗ Please specify input with --test, --file <path>, or --data <array>");
         return;
     };
 
-    // Теперь, когда базис получен, выполняем основную логику
-    let mut basis1 = basis.clone();
-    let delta = Float::with_val(53, 0.75);
-    lll(&mut basis1, delta.clone());
-    println!("Reduced basis: {:?}", basis1);
-}
+    if basis.is_empty() {
+        println!("[]");
+        return;
+    }
 
+    // The delta parameter for LLL, typically between (0.25, 1). 0.75 is standard.
+    let delta = Rational::from((3, 4)); 
+    
+    lll(&mut basis, &delta);
+
+    // Print the result in a machine-readable format
+    println!("{}", format_basis_as_json(&mut basis));
+}
