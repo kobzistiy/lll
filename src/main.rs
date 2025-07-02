@@ -28,18 +28,18 @@ fn dot_product(v1: &[Integer], v2: &[Integer]) -> Integer {
 }
 
 fn subtract_vec(v1: &[Integer], v2: &[Integer]) -> Vec<Integer> {
-    v1.iter().zip(v2.iter()).map(|(a, b)| a - b).collect()
+    v1.iter().zip(v2.iter()).map(|(a, b)| Integer::from(a - b)).collect()
 }
 
 fn scalar_mul(scalar: &Integer, v: &[Integer]) -> Vec<Integer> {
-    v.iter().map(|x| scalar * x).collect()
+    v.iter().map(|x| Integer::from(scalar * x)).collect()
 }
 
 // --- LLL Algorithm (Integer-based implementation) ---
 
 fn lll(b: &mut Vec<Vec<Integer>>, delta: &Rational) {
     let n = b.len();
-    let mut b_star = Vec::with_capacity(n); // Gram-Schmidt basis (b*)
+    let mut b_star: Vec<Vec<Rational>> = Vec::with_capacity(n); // Gram-Schmidt basis (b*)
     let mut mu = vec![vec![Rational::new(); n]; n]; // mu coefficients
 
     // Initial Gram-Schmidt
@@ -62,7 +62,7 @@ fn lll(b: &mut Vec<Vec<Integer>>, delta: &Rational) {
             let mu_kj = &mu[k][j];
             if mu_kj.abs() > 0.5 {
                 let q = mu_kj.round(); // Rounds to nearest integer
-                let q_integer = q.to_integer().unwrap();
+                let q_integer = q.into_integer().expect("Rounded rational should be an integer");
                 b[k] = subtract_vec(&b[k], &scalar_mul(&q_integer, &b[j]));
 
                 // Update mu values for row k
