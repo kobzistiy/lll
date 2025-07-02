@@ -13,6 +13,10 @@ struct Args {
     /// Запустить тестовый режим (встроенный пример)
     #[arg(long)]
     test: bool,
+    
+    /// Данные в виде [[11,3,4,4],[2,11,5,6],[7,8,11,9],[10,11,12,9]...]
+    #[arg(long)]
+    data: Option<String>,
 }
 
 fn lll(b: &mut Vec<Vec<Float>>, delta: Float) {
@@ -229,6 +233,36 @@ fn load_basis_from_csv(path: &str) -> Vec<Vec<Float>> {
     basis
 }
 
+fn load_basis_from_string(data_str: &str) -> Vec<Vec<Float>> {
+    let trimmed = data_str.trim();
+    if !trimmed.starts_with('[') || !trimmed.ends_with(']') {
+        panic!("Строка данных должна начинаться с '[' и заканчиваться ']'");
+    }
+
+    // Убираем внешние скобки: "[[1,2],[3,4]]" -> "[1,2],[3,4]"
+    // Если строка пустая "[]", вернем пустой вектор
+    if trimmed.len() <= 2 {
+        return Vec::new();
+    }
+    let inner = &trimmed[1..trimmed.len() - 1];
+
+    inner.split("],[")
+        .map(|s| {
+            // Убираем оставшиеся скобки '[' и ']' с крайних элементов
+            let row_str = s.trim_matches(|c| c == '[' || c == ']');
+            let row: Vec<Float> = row_str
+                .split(',')
+                .map(|num_str| {
+                    let parsed_num = num_str.trim().parse::<f64>()
+                        .expect("Некорректное число в строке данных");
+                    Float::with_val(53, parsed_num)
+                })
+                .collect();
+            row
+        })
+        .collect()
+}
+
 fn run_test() {
     let mut basis = vec![
         vec![Float::with_val(53, 11.0), Float::with_val(53, 3.0), Float::with_val(53, 4.0), Float::with_val(53, 4.0)],
@@ -256,13 +290,25 @@ fn main() {
 
     if args.test {
         run_test();
-    } else if let Some(path) = args.file {
-        let basis = load_basis_from_csv(&path);
-        let mut basis1 = basis.clone();
-        let delta = Float::with_val(53, 0.75);
-        lll(&mut basis1, delta.clone());
-        println!("Reduced basis: {:?}", basis1);
-    } else {
-        eprintln!("❗ Укажи либо --test, либо --file <путь>");
+        // Завершаем программу после теста
+        return;
     }
+
+    // Сначала получаем базис из одного из источников (файл или строка)
+    let basis = if let Some(path) = args.file {
+        load_basis_from_csv(&path)
+    } else if let Some(data_str) = args.data {
+        load_basis_from_string(&data_str)
+    } else {
+        // Если не указан ни один из источников, выводим ошибку и выходим
+        eprintln!("❗ Укажи либо --test, либо --file <путь>, либо --data <массив>");
+        return;
+    };
+
+    // Теперь, когда базис получен, выполняем основную логику
+    let mut basis1 = basis.clone();
+    let delta = Float::with_val(53, 0.75);
+    lll(&mut basis1, delta.clone());
+    println!("Reduced basis: {:?}", basis1);
 }
+
