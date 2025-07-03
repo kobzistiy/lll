@@ -47,6 +47,19 @@ fn scalar_mul(scalar: &Integer, v: &[Integer]) -> Vec<Integer> {
         .collect()
 }
 
+fn scalar_mul_rational(scalar: &Rational, v: &[Rational]) -> Vec<Rational> {
+    v.iter()
+        .map(|x| scalar.clone() * x.clone()) // Операции для типа Rational
+        .collect()
+}
+
+fn subtract_vec_rational(v1: &[Rational], v2: &[Rational]) -> Vec<Rational> {
+    v1.iter()
+        .zip(v2.iter())
+        .map(|(a, b)| a.clone() - b.clone()) // Операции для типа Rational
+        .collect()
+}
+
 // --- Основные алгоритмы ---
 
 /// Вычисляет ортогональный базис Грама-Шмидта (b_star) и коэффициенты mu.
@@ -86,17 +99,20 @@ fn lll(b: &mut Vec<Vec<Integer>>, delta: &Rational) {
         // Шаг 1: Size reduction
         for j in (0..k).rev() {
             let mu_kj = &mu[k][j];
-            // ИСПРАВЛЕНИЕ: Клонируем mu_kj перед использованием методов, которые забирают владение.
-            if mu_kj.clone().abs() > 0.5 {
+            // Клонируем mu_kj перед использованием методов, которые забирают владение.
+            if mu_kj.clone().abs() > Rational::from((1, 2)) {
                 let q = mu_kj.clone().round();
                 let q_integer = q.numer().clone();
                 
                 // b_k := b_k - q * b_j
                 b[k] = subtract_vec(&b[k], &scalar_mul(&q_integer, &b[j]));
 
+                // b_star[k] := b_star[k] - q * b_star[j]
+                let correction_b_star = scalar_mul_rational(&q, &b_star[j]);
+                b_star[k] = subtract_vec_rational(&b_star[k], &correction_b_star);
+
                 // Обновляем коэффициенты mu для k-й строки
                 for i in 0..=j {
-                   // ИСПРАВЛЕНИЕ: Разделяем чтение и запись, чтобы избежать ошибки E0502.
                    let val_to_mul = mu[j][i].clone();
                    mu[k][i] -= q.clone() * val_to_mul;
                 }
