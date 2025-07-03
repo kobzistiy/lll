@@ -92,50 +92,40 @@ fn lll(b: &mut Vec<Vec<Integer>>, delta: &Rational) {
     let n = b.len();
     if n == 0 { return; }
 
+    // Начальный расчет GS-базиса
     let (mut b_star, mut mu) = compute_gram_schmidt(b);
     
     let mut k = 1;
     while k < n {
-        // Шаг 1: Size reduction
+        // Шаг 1: Size reduction для k-й строки
         for j in (0..k).rev() {
             let mu_kj = &mu[k][j];
-            // Клонируем mu_kj перед использованием методов, которые забирают владение.
             if mu_kj.clone().abs() > Rational::from((1, 2)) {
                 let q = mu_kj.clone().round();
                 let q_integer = q.numer().clone();
-                
-                // b_k := b_k - q * b_j
+                // Обновляем только b[k]. b_star и mu будут полностью пересчитаны ниже.
                 b[k] = subtract_vec(&b[k], &scalar_mul(&q_integer, &b[j]));
-
-                // b_star[k] := b_star[k] - q * b_star[j]
-                let correction_b_star = scalar_mul_rational(&q, &b_star[j]);
-                b_star[k] = subtract_vec_rational(&b_star[k], &correction_b_star);
-
-                // Обновляем коэффициенты mu для k-й строки
-                for i in 0..=j {
-                   let val_to_mul = mu[j][i].clone();
-                   mu[k][i] -= q.clone() * val_to_mul;
-                }
             }
         }
 
+        // Это гарантирует, что условие Ловаса использует актуальные данные.
+        (b_star, mu) = compute_gram_schmidt(b);
+
         // Шаг 2: Условие Ловаса
         let norm_b_star_k_sq: Rational = b_star[k].iter().map(|c| c.clone().pow(2)).sum();
-        
-        // Проверка, чтобы избежать деления на ноль, если b_star[k-1] нулевой
-        if b_star[k-1].iter().all(|c| c.is_zero()) {
+        let norm_b_star_k_minus_1_sq: Rational = b_star[k-1].iter().map(|c| c.clone().pow(2)).sum();
+
+        if norm_b_star_k_minus_1_sq.is_zero() {
             k += 1;
             continue;
         }
-        
-        let norm_b_star_k_minus_1_sq: Rational = b_star[k-1].iter().map(|c| c.clone().pow(2)).sum();
         
         if norm_b_star_k_sq >= (delta - mu[k][k-1].clone().pow(2)) * norm_b_star_k_minus_1_sq {
             k += 1;
         } else {
             // Обмен b_k и b_{k-1}
             b.swap(k, k-1);
-            // Полный пересчет GS-базиса и mu после обмена
+            // После обмена снова требуется полный пересчет GS
             (b_star, mu) = compute_gram_schmidt(b);
             
             if k > 1 {
@@ -155,7 +145,7 @@ fn bkz(b: &mut Vec<Vec<Integer>>, delta: &Rational, block_size: usize) {
         iter_count += 1;
         let old_basis = b.clone();
 
-        // Обработка блоков
+        // Шаг 1: Обработка блоков с помощью LLL
         for k in 0..=(n.saturating_sub(block_size)) {
             let mut block = b[k..k + block_size].to_vec();
             lll(&mut block, delta);
@@ -164,14 +154,32 @@ fn bkz(b: &mut Vec<Vec<Integer>>, delta: &Rational, block_size: usize) {
                 b[k + i] = block[i].clone();
             }
         }
+        
+        let (mut b_star, mut mu) = compute_gram_schmidt(b);
+        for i in 1..n {
+            for j in (0..i).rev() {
+                let mu_ij = &mu[i][j];
+                if mu_ij.clone().abs() > Rational::from((1, 2)) {
+                    let q = mu_ij.clone().round();
+                    let q_integer = q.numer().clone();
+                    b[i] = subtract_vec(&b[i], &scalar_mul(&q_integer, &b[j]));
 
-        // Если базис не изменился после полного прохода, завершаем
-        if &old_basis == b || iter_count > 10 * n { // Ограничитель для предотвращения бесконечного цикла
+                    // Обновляем b_star и mu инкрементально для этого шага
+                    let correction_b_star = scalar_mul_rational(&q, &b_star[j]);
+                    b_star[i] = subtract_vec_rational(&b_star[i], &correction_b_star);
+                    for l in 0..=j {
+                        mu[i][l] -= q.clone() * mu[j][l].clone();
+                    }
+                }
+            }
+        }
+
+        // Условие завершения
+        if &old_basis == b || iter_count > 10 * n { 
             break;
         }
     }
 }
-
 
 // --- Загрузка данных и главная функция ---
 
