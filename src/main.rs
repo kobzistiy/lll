@@ -92,8 +92,8 @@ fn lll(b: &mut Vec<Vec<Integer>>, delta: &Rational) {
     let n = b.len();
     if n == 0 { return; }
 
-    // Начальный расчет GS-базиса
-    let (mut b_star, mut mu) = compute_gram_schmidt(b);
+    // Используем `_b_star`, чтобы убрать предупреждение. Нам нужен только `mu` для первого шага.
+    let (mut _b_star, mut mu) = compute_gram_schmidt(b);
     
     let mut k = 1;
     while k < n {
@@ -103,13 +103,13 @@ fn lll(b: &mut Vec<Vec<Integer>>, delta: &Rational) {
             if mu_kj.clone().abs() > Rational::from((1, 2)) {
                 let q = mu_kj.clone().round();
                 let q_integer = q.numer().clone();
-                // Обновляем только b[k]. b_star и mu будут полностью пересчитаны ниже.
                 b[k] = subtract_vec(&b[k], &scalar_mul(&q_integer, &b[j]));
             }
         }
 
-        // Это гарантирует, что условие Ловаса использует актуальные данные.
-        (b_star, mu) = compute_gram_schmidt(b);
+        // Полный пересчет GS после size reduction для k-й строки.
+        let (b_star, new_mu) = compute_gram_schmidt(b);
+        mu = new_mu; // Обновляем mu
 
         // Шаг 2: Условие Ловаса
         let norm_b_star_k_sq: Rational = b_star[k].iter().map(|c| c.clone().pow(2)).sum();
@@ -123,10 +123,10 @@ fn lll(b: &mut Vec<Vec<Integer>>, delta: &Rational) {
         if norm_b_star_k_sq >= (delta - mu[k][k-1].clone().pow(2)) * norm_b_star_k_minus_1_sq {
             k += 1;
         } else {
-            // Обмен b_k и b_{k-1}
             b.swap(k, k-1);
-            // После обмена снова требуется полный пересчет GS
-            (b_star, mu) = compute_gram_schmidt(b);
+            // Используем `_b_star`, чтобы убрать предупреждение.
+            // GS будет полностью пересчитан на следующей итерации цикла.
+            (_b_star, mu) = compute_gram_schmidt(b);
             
             if k > 1 {
                 k -= 1;
@@ -149,12 +149,12 @@ fn bkz(b: &mut Vec<Vec<Integer>>, delta: &Rational, block_size: usize) {
         for k in 0..=(n.saturating_sub(block_size)) {
             let mut block = b[k..k + block_size].to_vec();
             lll(&mut block, delta);
-            // Обновляем базис результатами из LLL для блока
             for i in 0..block_size {
                 b[k + i] = block[i].clone();
             }
         }
         
+        // Глобальная size reduction для всего базиса после обработки блоков.
         let (mut b_star, mut mu) = compute_gram_schmidt(b);
         for i in 1..n {
             for j in (0..i).rev() {
@@ -164,11 +164,13 @@ fn bkz(b: &mut Vec<Vec<Integer>>, delta: &Rational, block_size: usize) {
                     let q_integer = q.numer().clone();
                     b[i] = subtract_vec(&b[i], &scalar_mul(&q_integer, &b[j]));
 
-                    // Обновляем b_star и mu инкрементально для этого шага
+                    // Обновляем b_star и mu инкрементально
                     let correction_b_star = scalar_mul_rational(&q, &b_star[j]);
                     b_star[i] = subtract_vec_rational(&b_star[i], &correction_b_star);
+                    
                     for l in 0..=j {
-                        mu[i][l] -= q.clone() * mu[j][l].clone();
+                        let val_to_mul = mu[j][l].clone();
+                        mu[i][l] -= q.clone() * val_to_mul;
                     }
                 }
             }
